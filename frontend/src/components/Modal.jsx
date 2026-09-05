@@ -15,16 +15,16 @@ export default function Modal({ open, title, onClose, children, wide }) {
         aria-hidden="true"
       />
       <div
-        className={`relative w-full ${wide ? 'max-w-2xl' : 'max-w-md'} max-h-[92vh] overflow-y-auto rounded-2xl bg-white shadow-2xl`}
+        className={`relative w-full ${wide ? 'max-w-2xl' : 'max-w-md'} max-h-[92vh] overflow-y-auto rounded-2xl border border-gray-200 bg-white shadow-2xl`}
         role="dialog"
         aria-modal="true"
       >
-        <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
-          <h2 className="text-base font-semibold text-slate-800">{title}</h2>
+        <div className="flex items-center justify-between border-b border-gray-200 px-5 py-4">
+          <h2 className="text-base font-semibold text-gray-800">{title}</h2>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+            className="rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-50 hover:text-gray-600"
             aria-label="Close dialog"
           >
             <X className="h-5 w-5" />

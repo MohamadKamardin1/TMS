@@ -9,7 +9,12 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
+/**
+ * Full read model of an order, covering both the customer's tailoring request
+ * details and the tailor's estimation, so every role sees the whole picture.
+ */
 public record OrderDTO(
         Long id,
         Long customerId,
@@ -20,7 +25,12 @@ public record OrderDTO(
         String deliveryName,
         String title,
         String description,
-        LocalDate requiredCompletionDate,
+        String garmentType,
+        String fabricType,
+        String styleDetails,
+        Map<String, Object> measurements,
+        LocalDate preferredDeliveryDate,
+        String specialInstructions,
         BigDecimal estimatedPrice,
         LocalDate estimatedCompletionDate,
         String termsAndPolicy,
@@ -51,6 +61,9 @@ public record OrderDTO(
         List<AttachmentDTO> attachments = order.getAttachments() == null
                 ? List.of()
                 : order.getAttachments().stream().map(AttachmentDTO::from).toList();
+        Map<String, Object> measurements = order.getMeasurements() == null
+                ? Map.of()
+                : order.getMeasurements();
 
         return new OrderDTO(
                 order.getId(),
@@ -62,7 +75,12 @@ public record OrderDTO(
                 deliveryAgent != null ? deliveryAgent.getFullName() : null,
                 order.getTitle(),
                 order.getDescription(),
-                order.getRequiredCompletionDate(),
+                order.getGarmentType(),
+                order.getFabricType(),
+                order.getStyleDetails(),
+                measurements,
+                order.getPreferredDeliveryDate(),
+                order.getSpecialInstructions(),
                 order.getEstimatedPrice(),
                 order.getEstimatedCompletionDate(),
                 order.getTermsAndPolicy(),

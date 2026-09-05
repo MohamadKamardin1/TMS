@@ -23,10 +23,10 @@ import org.springframework.test.web.servlet.MvcResult;
 @ActiveProfiles("test")
 class FulfillmentFlowTests {
 
-    private static final String ADMIN_PASSWORD = "admin123";
-    private static final String TAILOR_PASSWORD = "tailor123";
-    private static final String CASHIER_PASSWORD = "cashier123";
-    private static final String DELIVERY_PASSWORD = "delivery123";
+    private static final String ADMIN_PASSWORD = "123456";
+    private static final String TAILOR_PASSWORD = "123456";
+    private static final String CASHIER_PASSWORD = "123456";
+    private static final String DELIVERY_PASSWORD = "123456";
 
     @Autowired
     private MockMvc mockMvc;
@@ -38,9 +38,9 @@ class FulfillmentFlowTests {
     void tailor_delivery_customer_full_workflow() throws Exception {
         String customerToken = register(uniqueUsername());
         long orderId = toPaid(customerToken);
-        String tailorToken = login("tailor1", TAILOR_PASSWORD);
-        String adminToken = login("admin", ADMIN_PASSWORD);
-        String deliveryToken = login("delivery1", DELIVERY_PASSWORD);
+        String tailorToken = login("tailor@gmail.com", TAILOR_PASSWORD);
+        String adminToken = login("admin@gmail.com", ADMIN_PASSWORD);
+        String deliveryToken = login("delivery@gmail.com", DELIVERY_PASSWORD);
 
         // Tailor must first start production before the order can be marked ready
         mockMvc.perform(post("/api/orders/{id}/ready-for-delivery", orderId)
@@ -63,14 +63,32 @@ class FulfillmentFlowTests {
                 .andExpect(status().isConflict());
 
         long deliveryId = userId(deliveryToken);
+
+        // Assigning a delivery agent keeps the garment READY_FOR_DELIVERY at the
+        // shop — the run is dispatched only once the assigned agent marks it out.
         mockMvc.perform(post("/api/orders/{id}/assign-delivery", orderId)
                         .header("Authorization", bearer(adminToken))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"deliveryUserId":%d}""".formatted(deliveryId)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.status").value("OUT_FOR_DELIVERY"))
-                .andExpect(jsonPath("$.data.deliveryName").value("Demo Delivery"));
+                .andExpect(jsonPath("$.data.status").value("READY_FOR_DELIVERY"))
+                .andExpect(jsonPath("$.data.deliveryName").value("Delivery Agent"));
+
+        // Hand-over cannot be confirmed before the run has been dispatched.
+        mockMvc.perform(post("/api/orders/{id}/confirm-delivery", orderId)
+                        .header("Authorization", bearer(deliveryToken)))
+                .andExpect(status().isConflict());
+
+        // Only delivery staff may dispatch; only the assigned agent does so.
+        mockMvc.perform(post("/api/orders/{id}/out-for-delivery", orderId)
+                        .header("Authorization", bearer(customerToken)))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(post("/api/orders/{id}/out-for-delivery", orderId)
+                        .header("Authorization", bearer(deliveryToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("OUT_FOR_DELIVERY"));
 
         // Re-assigning while OUT_FOR_DELIVERY is allowed and keeps the status
         mockMvc.perform(post("/api/orders/{id}/assign-delivery", orderId)
@@ -101,6 +119,13 @@ class FulfillmentFlowTests {
                                 {"orderId":%d,"rating":5,"comments":"Excellent work!"}
                                 """.formatted(orderId)))
                 .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.rating").value(5))
+                .andExpect(jsonPath("$.data.comments").value("Excellent work!"));
+
+        // The customer can read the submitted review back for this order.
+        mockMvc.perform(get("/api/feedback/order/{orderId}", orderId)
+                        .header("Authorization", bearer(customerToken)))
+                .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.rating").value(5))
                 .andExpect(jsonPath("$.data.comments").value("Excellent work!"));
 
@@ -143,8 +168,8 @@ class FulfillmentFlowTests {
     void fulfillment_endpoints_respect_roles() throws Exception {
         String customerToken = register(uniqueUsername());
         long orderId = toPaid(customerToken);
-        String tailorToken = login("tailor1", TAILOR_PASSWORD);
-        String deliveryToken = login("delivery1", DELIVERY_PASSWORD);
+        String tailorToken = login("tailor@gmail.com", TAILOR_PASSWORD);
+        String deliveryToken = login("delivery@gmail.com", DELIVERY_PASSWORD);
 
         // Only tailors may start production
         mockMvc.perform(post("/api/orders/{id}/start-production", orderId)
@@ -186,29 +211,31 @@ class FulfillmentFlowTests {
                 .andReturn());
         submitEstimation(orderId);
 
-        String cashierToken = login("cashier1", CASHIER_PASSWORD);
+        String cashierToken = login("cashier@gmail.com", CASHIER_PASSWORD);
         long invoiceId = idFrom(mockMvc.perform(post("/api/invoices")
                         .param("orderId", String.valueOf(orderId))
                         .header("Authorization", bearer(cashierToken))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"amount":5000.0,"accountNumber":"ACC-001","referenceNumber":"INV-001"}"""))
+                        .content("{}"))
                 .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.status").value("DRAFT"))
                 .andReturn());
 
-        mockMvc.perform(patch("/api/invoices/{id}/status", invoiceId)
-                        .header("Authorization", bearer(cashierToken))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"paymentStatus":"PAID"}"""))
+        mockMvc.perform(post("/api/invoices/{id}/issue", invoiceId)
+                        .header("Authorization", bearer(cashierToken)))
                 .andExpect(status().isOk());
+
+        mockMvc.perform(post("/api/invoices/{id}/record-payment", invoiceId)
+                        .header("Authorization", bearer(cashierToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("PAID"));
 
         return orderId;
     }
 
     private void submitEstimation(long orderId) throws Exception {
-        String adminToken = login("admin", ADMIN_PASSWORD);
-        String tailorToken = login("tailor1", TAILOR_PASSWORD);
+        String adminToken = login("admin@gmail.com", ADMIN_PASSWORD);
+        String tailorToken = login("tailor@gmail.com", TAILOR_PASSWORD);
         long tailorId = userId(tailorToken);
 
         mockMvc.perform(post("/api/orders/{id}/assign-tailor", orderId)

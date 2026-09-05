@@ -100,7 +100,7 @@ class AuthFlowTests {
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.success").value(false));
 
-        String adminToken = login("admin", "admin123");
+        String adminToken = login("admin@gmail.com", "123456");
         mockMvc.perform(put("/api/customers/{id}/measurements", otherProfileId)
                         .header("Authorization", bearer(adminToken))
                         .contentType(MediaType.APPLICATION_JSON)

@@ -1,8 +1,10 @@
 package com.amdevelopers.tms.entity;
 
+import com.amdevelopers.tms.entity.converter.JsonMapConverter;
 import com.amdevelopers.tms.enums.OrderStatus;
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EntityListeners;
 import jakarta.persistence.EnumType;
@@ -29,6 +31,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 @Data
 @NoArgsConstructor
@@ -55,14 +58,34 @@ public class Order {
     @JoinColumn(name = "delivery_agent_id")
     private User deliveryAgent;
 
-    @Column(name = "title", nullable = false, length = 100)
+    @Column(name = "title", length = 100)
     private String title;
 
     @Column(name = "description", columnDefinition = "TEXT")
     private String description;
 
-    @Column(name = "required_completion_date")
-    private LocalDate requiredCompletionDate;
+    // ---------------- Tailoring request details ----------------
+
+    @Column(name = "garment_type", length = 100)
+    private String garmentType;
+
+    @Column(name = "fabric_type", length = 100)
+    private String fabricType;
+
+    @Column(name = "style_details", columnDefinition = "TEXT")
+    private String styleDetails;
+
+    @Convert(converter = JsonMapConverter.class)
+    @Column(name = "measurements", columnDefinition = "TEXT")
+    private Map<String, Object> measurements;
+
+    @Column(name = "preferred_delivery_date")
+    private LocalDate preferredDeliveryDate;
+
+    @Column(name = "special_instructions", columnDefinition = "TEXT")
+    private String specialInstructions;
+
+    // ---------------- Estimation / fulfillment ----------------
 
     @Column(name = "estimated_price", precision = 18, scale = 2)
     private BigDecimal estimatedPrice;

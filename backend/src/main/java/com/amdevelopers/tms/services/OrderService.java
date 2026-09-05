@@ -3,21 +3,20 @@ package com.amdevelopers.tms.services;
 import com.amdevelopers.tms.dto.AssignDeliveryRequest;
 import com.amdevelopers.tms.dto.AssignTailorRequest;
 import com.amdevelopers.tms.dto.CreateOrderDTO;
-import com.amdevelopers.tms.dto.FeedbackDTO;
 import com.amdevelopers.tms.dto.OrderDTO;
 import com.amdevelopers.tms.dto.TailorEstimationDTO;
 import com.amdevelopers.tms.dto.UpdateOrderStatusDTO;
 import com.amdevelopers.tms.entity.CustomerProfile;
-import com.amdevelopers.tms.entity.Feedback;
 import com.amdevelopers.tms.entity.Order;
 import com.amdevelopers.tms.entity.OrderAttachment;
 import com.amdevelopers.tms.entity.User;
+import com.amdevelopers.tms.entity.converter.JsonMapConverter;
 import com.amdevelopers.tms.enums.OrderStatus;
 import com.amdevelopers.tms.enums.Role;
 import com.amdevelopers.tms.exceptions.ResourceNotFoundException;
-import com.amdevelopers.tms.repositories.FeedbackRepository;
 import com.amdevelopers.tms.repositories.OrderRepository;
 import com.amdevelopers.tms.repositories.UserRepository;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -26,6 +25,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
 @Service
 @RequiredArgsConstructor
@@ -54,11 +54,13 @@ public class OrderService {
     private final UserService userService;
     private final CustomerProfileService customerProfileService;
     private final FileStorageService fileStorageService;
-    private final FeedbackRepository feedbackRepository;
+    private final AuditService auditService;
 
     /**
-     * Creates an order in PENDING_REVIEW for the current customer and stores
-     * the reference image (if any) as an attachment.
+     * Creates a tailoring request in PENDING_REVIEW for the current customer.
+     * Structured request fields are persisted directly; {@code measurements}
+     * arrives as a JSON string and is sanitised into a map; every reference
+     * image is stored and attached.
      */
     @Transactional
     public OrderDTO createOrder(CreateOrderDTO dto) {
@@ -66,24 +68,22 @@ public class OrderService {
 
         Order order = Order.builder()
                 .customer(customer)
-                .title(dto.getTitle())
-                .description(dto.getDescription())
-                .requiredCompletionDate(dto.getRequiredCompletionDate())
+                .title(resolveTitle(dto))
+                .description(trimToNull(dto.getDescription()))
+                .garmentType(trimToNull(dto.getGarmentType()))
+                .fabricType(trimToNull(dto.getFabricType()))
+                .styleDetails(trimToNull(dto.getStyleDetails()))
+                .measurements(parseMeasurements(dto.getMeasurements()))
+                .preferredDeliveryDate(dto.getPreferredDeliveryDate())
+                .specialInstructions(trimToNull(dto.getSpecialInstructions()))
                 .status(OrderStatus.PENDING_REVIEW)
                 .build();
         orderRepository.save(order);
 
-        if (dto.getReferenceImage() != null && !dto.getReferenceImage().isEmpty()) {
-            String fileUrl = fileStorageService.store(dto.getReferenceImage());
-            OrderAttachment attachment = OrderAttachment.builder()
-                    .order(order)
-                    .fileUrl(fileUrl)
-                    .fileName(dto.getReferenceImage().getOriginalFilename())
-                    .fileType(dto.getReferenceImage().getContentType())
-                    .build();
-            order.getAttachments().add(attachment);
-        }
+        attachReferenceImages(order, dto.getReferenceImages());
 
+        auditService.record(AuditService.Actions.ORDER_CREATED, AuditService.ENTITY_ORDER,
+                order.getId(), null, AuditService.orderState(order));
         return OrderDTO.from(order);
     }
 
@@ -100,22 +100,36 @@ public class OrderService {
             throw new IllegalArgumentException("User with id " + request.tailorId() + " is not a TAILOR");
         }
 
+        Map<String, Object> before = AuditService.orderState(order);
         order.setTailor(tailor);
+        Map<String, Object> after = AuditService.orderState(order);
+        auditService.record(AuditService.Actions.ORDER_TAILOR_ASSIGNED, AuditService.ENTITY_ORDER,
+                order.getId(), before, after);
         return OrderDTO.from(order);
     }
 
     /**
      * Marks an order as ESTIMATED with price, completion date and terms.
-     * Only the TAILOR the order is assigned to may submit the estimation.
+     * Only the TAILOR the order is assigned to may submit the estimation, and
+     * only while the order is still awaiting review (PENDING_REVIEW) — an
+     * already-estimated or further-along order can never be re-estimated.
      */
     @Transactional
     public OrderDTO submitEstimation(Long orderId, TailorEstimationDTO dto) {
         Order order = requireAssignedTailor(userService.getCurrentUser(), orderId);
 
+        if (order.getStatus() != OrderStatus.PENDING_REVIEW) {
+            throw new IllegalStateException(
+                    "Only orders in PENDING_REVIEW can be estimated, current status: " + order.getStatus());
+        }
+        Map<String, Object> before = AuditService.orderState(order);
         validateTransition(order, OrderStatus.ESTIMATED);
         order.setEstimatedPrice(dto.estimatedPrice());
         order.setEstimatedCompletionDate(dto.estimatedCompletionDate());
         order.setTermsAndPolicy(dto.termsAndPolicy());
+        Map<String, Object> after = AuditService.orderState(order);
+        auditService.record(AuditService.Actions.ORDER_ESTIMATED, AuditService.ENTITY_ORDER,
+                order.getId(), before, after);
         return OrderDTO.from(order);
     }
 
@@ -129,7 +143,10 @@ public class OrderService {
     public OrderDTO startProduction(Long orderId) {
         Order order = requireAssignedTailor(userService.getCurrentUser(), orderId);
 
+        Map<String, Object> before = AuditService.orderState(order);
         validateTransition(order, OrderStatus.IN_PROGRESS);
+        auditService.record(AuditService.Actions.ORDER_STATUS_CHANGED, AuditService.ENTITY_ORDER,
+                order.getId(), before, AuditService.orderState(order));
         return OrderDTO.from(order);
     }
 
@@ -140,26 +157,64 @@ public class OrderService {
     public OrderDTO markReadyForDelivery(Long orderId) {
         Order order = requireAssignedTailor(userService.getCurrentUser(), orderId);
 
+        Map<String, Object> before = AuditService.orderState(order);
         validateTransition(order, OrderStatus.READY_FOR_DELIVERY);
+        auditService.record(AuditService.Actions.ORDER_STATUS_CHANGED, AuditService.ENTITY_ORDER,
+                order.getId(), before, AuditService.orderState(order));
         return OrderDTO.from(order);
     }
 
     /**
-     * (Admin/Cashier) Assigns a DELIVERY user and moves the order out for
-     * delivery: READY_FOR_DELIVERY -&gt; OUT_FOR_DELIVERY. Re-assigning while
-     * already OUT_FOR_DELIVERY is allowed and keeps the same status.
+     * (Admin/Cashier) Staffs a delivery run by assigning a DELIVERY user. The
+     * order keeps its current status: a READY_FOR_DELIVERY garment stays at the
+     * shop until the assigned agent dispatches it, and a run already
+     * OUT_FOR_DELIVERY can be re-staffed if the first agent falls through.
      */
     @Transactional
-    public OrderDTO assignDelivery(Long orderId, AssignDeliveryRequest request) {
+    public OrderDTO assignDeliveryAgent(Long orderId, AssignDeliveryRequest request) {
         Order order = getOrder(orderId);
+        OrderStatus current = order.getStatus();
+        if (current != OrderStatus.READY_FOR_DELIVERY && current != OrderStatus.OUT_FOR_DELIVERY) {
+            throw new IllegalStateException(
+                    "A delivery agent can only be assigned when the order is READY_FOR_DELIVERY or OUT_FOR_DELIVERY,"
+                            + " current status: " + current);
+        }
+
         User deliveryAgent = userRepository.findById(request.deliveryUserId())
                 .orElseThrow(() -> new ResourceNotFoundException("Delivery user not found: " + request.deliveryUserId()));
         if (deliveryAgent.getRole() != Role.DELIVERY) {
             throw new IllegalArgumentException("User with id " + request.deliveryUserId() + " is not a DELIVERY");
         }
 
+        Map<String, Object> before = AuditService.orderState(order);
         order.setDeliveryAgent(deliveryAgent);
+        Map<String, Object> after = AuditService.orderState(order);
+        auditService.record(AuditService.Actions.ORDER_DELIVERY_ASSIGNED, AuditService.ENTITY_ORDER,
+                order.getId(), before, after);
+        return OrderDTO.from(order);
+    }
+
+    /**
+     * (Delivery) Dispatches a staffed delivery run:
+     * READY_FOR_DELIVERY -&gt; OUT_FOR_DELIVERY. Only the assigned DELIVERY user
+     * may take the garment out.
+     */
+    @Transactional
+    public OrderDTO markOutForDelivery(Long orderId) {
+        User currentUser = userService.getCurrentUser();
+        Order order = getOrder(orderId);
+
+        if (currentUser.getRole() != Role.DELIVERY) {
+            throw new AccessDeniedException("Only delivery agents can dispatch an order");
+        }
+        if (order.getDeliveryAgent() == null || !order.getDeliveryAgent().getId().equals(currentUser.getId())) {
+            throw new AccessDeniedException("This order is not assigned to you");
+        }
+
+        Map<String, Object> before = AuditService.orderState(order);
         validateTransition(order, OrderStatus.OUT_FOR_DELIVERY);
+        auditService.record(AuditService.Actions.ORDER_STATUS_CHANGED, AuditService.ENTITY_ORDER,
+                order.getId(), before, AuditService.orderState(order));
         return OrderDTO.from(order);
     }
 
@@ -179,7 +234,10 @@ public class OrderService {
             throw new AccessDeniedException("This order is not assigned to you");
         }
 
+        Map<String, Object> before = AuditService.orderState(order);
         validateTransition(order, OrderStatus.DELIVERED);
+        auditService.record(AuditService.Actions.ORDER_STATUS_CHANGED, AuditService.ENTITY_ORDER,
+                order.getId(), before, AuditService.orderState(order));
         return OrderDTO.from(order);
     }
 
@@ -191,43 +249,11 @@ public class OrderService {
     public OrderDTO updateStatus(Long orderId, UpdateOrderStatusDTO dto) {
         Order order = getOrder(orderId);
 
+        Map<String, Object> before = AuditService.orderState(order);
         validateTransition(order, dto.status());
+        auditService.record(AuditService.Actions.ORDER_STATUS_CHANGED, AuditService.ENTITY_ORDER,
+                order.getId(), before, AuditService.orderState(order));
         return OrderDTO.from(order);
-    }
-
-    /**
-     * (Customer) Records feedback for a delivered order (one per order).
-     * Only the customer who placed the order may submit it, and only once the
-     * order has been DELIVERED.
-     */
-    @Transactional
-    public FeedbackDTO submitFeedback(FeedbackDTO dto) {
-        Order order = getOrder(dto.orderId());
-        User currentUser = userService.getCurrentUser();
-
-        if (currentUser.getRole() != Role.CUSTOMER) {
-            throw new AccessDeniedException("Only customers can submit feedback");
-        }
-        if (order.getCustomer() == null || order.getCustomer().getUser() == null
-                || !order.getCustomer().getUser().getId().equals(currentUser.getId())) {
-            throw new AccessDeniedException("You can only provide feedback for your own orders");
-        }
-        if (order.getStatus() != OrderStatus.DELIVERED) {
-            throw new IllegalStateException(
-                    "Feedback is only allowed after the order is DELIVERED, current status: " + order.getStatus());
-        }
-        if (feedbackRepository.findByOrder(order).isPresent()) {
-            throw new IllegalStateException("Feedback has already been submitted for order " + dto.orderId());
-        }
-
-        Feedback feedback = Feedback.builder()
-                .order(order)
-                .customer(order.getCustomer())
-                .rating(dto.rating())
-                .comments(dto.comments())
-                .build();
-        feedbackRepository.save(feedback);
-        return FeedbackDTO.from(feedback);
     }
 
     /**
@@ -312,5 +338,72 @@ public class OrderService {
     private Order getOrder(Long orderId) {
         return orderRepository.findById(orderId)
                 .orElseThrow(() -> new ResourceNotFoundException("Order not found: " + orderId));
+    }
+
+    /**
+     * Stores every non-empty reference image and links it to the order. The
+     * order stays managed within this transaction, so the cascaded inserts are
+     * flushed when the transaction commits.
+     */
+    private void attachReferenceImages(Order order, List<MultipartFile> images) {
+        if (images == null) {
+            return;
+        }
+        for (MultipartFile image : images) {
+            if (image == null || image.isEmpty()) {
+                continue;
+            }
+            String fileUrl = fileStorageService.store(image);
+            OrderAttachment attachment = OrderAttachment.builder()
+                    .order(order)
+                    .fileUrl(fileUrl)
+                    .fileName(image.getOriginalFilename())
+                    .fileType(image.getContentType())
+                    .build();
+            order.getAttachments().add(attachment);
+        }
+    }
+
+    /**
+     * When the customer does not provide a free-text title (the new request
+     * form does not), fall back to the garment type, then to a generic label.
+     */
+    private String resolveTitle(CreateOrderDTO dto) {
+        String title = trimToNull(dto.getTitle());
+        if (title != null) {
+            return title;
+        }
+        String garmentType = trimToNull(dto.getGarmentType());
+        return garmentType != null ? garmentType : "Custom tailoring request";
+    }
+
+    /**
+     * Parses the JSON-encoded measurements and drops blank entries so a stale
+     * or empty payload never leaves dangling keys in the stored document.
+     */
+    private Map<String, Object> parseMeasurements(String raw) {
+        Map<String, Object> parsed = JsonMapConverter.parseClientJson(raw);
+        if (parsed == null || parsed.isEmpty()) {
+            return null;
+        }
+        Map<String, Object> cleaned = new LinkedHashMap<>();
+        parsed.forEach((key, value) -> {
+            if (key == null || key.isBlank()) {
+                return;
+            }
+            String normalizedValue = value == null ? null : value.toString().trim();
+            if (normalizedValue != null && !normalizedValue.isEmpty()) {
+                cleaned.put(key.trim(), normalizedValue);
+            }
+        });
+        return cleaned.isEmpty() ? null : cleaned;
+    }
+
+    private String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 }

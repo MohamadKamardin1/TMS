@@ -1,6 +1,6 @@
 package com.amdevelopers.tms.entity;
 
-import com.amdevelopers.tms.enums.PaymentStatus;
+import com.amdevelopers.tms.enums.InvoiceStatus;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -13,14 +13,23 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToOne;
 import jakarta.persistence.Table;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.math.BigDecimal;
-import java.time.LocalDateTime;
-
+/**
+ * A financial document for one order. Exactly one invoice may ever exist per
+ * order (enforced by the unique {@code order_id} and the {@link OneToOne}).
+ *
+ * <p>Monetary columns are kept deliberately nullable at the database level (the
+ * schema evolves in place via {@code ddl-auto=update}); the application always
+ * populates every amount before the invoice leaves the service layer, and the
+ * grand total is recomputed server-side from the components.
+ */
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -37,19 +46,33 @@ public class Invoice {
     @JoinColumn(name = "order_id", nullable = false, unique = true)
     private Order order;
 
-    @Column(name = "amount", nullable = false, precision = 18, scale = 2)
-    private BigDecimal amount;
+    /** Auto-generated, e.g. {@code INV-2026-0001}. Stable once the draft is created. */
+    @Column(name = "invoice_number", length = 30)
+    private String invoiceNumber;
 
-    @Column(name = "account_number", length = 50)
-    private String accountNumber;
+    @Column(name = "subtotal", precision = 18, scale = 2)
+    private BigDecimal subtotal;
 
-    @Column(name = "reference_number", length = 50)
-    private String referenceNumber;
+    @Column(name = "tax_amount", precision = 18, scale = 2)
+    private BigDecimal taxAmount;
+
+    @Column(name = "discount_amount", precision = 18, scale = 2)
+    private BigDecimal discountAmount;
+
+    @Column(name = "total_amount", precision = 18, scale = 2)
+    private BigDecimal totalAmount;
+
+    /** How and where to pay (bank details, account, reference note). */
+    @Column(name = "payment_instructions", columnDefinition = "TEXT")
+    private String paymentInstructions;
+
+    @Column(name = "due_date")
+    private LocalDate dueDate;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "payment_status", nullable = false, length = 20)
+    @Column(name = "status", length = 20)
     @Builder.Default
-    private PaymentStatus paymentStatus = PaymentStatus.PENDING;
+    private InvoiceStatus status = InvoiceStatus.DRAFT;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "issued_by")
@@ -60,4 +83,7 @@ public class Invoice {
 
     @Column(name = "paid_at")
     private LocalDateTime paidAt;
+
+    @Column(name = "created_at", updatable = false)
+    private LocalDateTime createdAt;
 }

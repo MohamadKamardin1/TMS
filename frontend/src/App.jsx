@@ -5,11 +5,15 @@ import AppLayout from './components/AppLayout';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Unauthorized from './pages/Unauthorized';
-import AdminDashboard from './pages/AdminDashboard';
-import TailorDashboard from './pages/TailorDashboard';
-import CashierDashboard from './pages/CashierDashboard';
-import DeliveryDashboard from './pages/DeliveryDashboard';
+import AdminDashboard from './pages/admin/AdminDashboard';
+import UserManagement from './pages/admin/UserManagement';
+import AuditLogs from './pages/admin/AuditLogs';
+import TailorDashboard from './pages/tailor/TailorDashboard';
+import CashierDashboard from './pages/cashier/CashierDashboard';
+import DeliveryDashboard from './pages/delivery/DeliveryDashboard';
 import CustomerDashboard from './pages/CustomerDashboard';
+import CreateOrder from './pages/customer/CreateOrder';
+import OrderDetails from './pages/customer/OrderDetails';
 import Orders from './pages/Orders';
 import Invoices from './pages/Invoices';
 
@@ -22,11 +26,47 @@ function HomeRedirect() {
 }
 
 const SECTIONS = [
-  { prefix: 'admin', roles: ['ADMIN'], dashboard: AdminDashboard, invoices: true },
-  { prefix: 'tailor', roles: ['TAILOR'], dashboard: TailorDashboard, invoices: false },
-  { prefix: 'cashier', roles: ['CASHIER'], dashboard: CashierDashboard, invoices: true },
-  { prefix: 'delivery', roles: ['DELIVERY'], dashboard: DeliveryDashboard, invoices: false },
-  { prefix: 'customer', roles: ['CUSTOMER'], dashboard: CustomerDashboard, invoices: false },
+  {
+    prefix: 'admin',
+    roles: ['ADMIN'],
+    dashboard: AdminDashboard,
+    invoices: true,
+    children: [
+      { path: 'users', element: <UserManagement /> },
+      { path: 'audit-logs', element: <AuditLogs /> },
+    ],
+  },
+  {
+    prefix: 'tailor',
+    roles: ['TAILOR'],
+    dashboard: TailorDashboard,
+    invoices: false,
+    children: [],
+  },
+  {
+    prefix: 'cashier',
+    roles: ['CASHIER'],
+    dashboard: CashierDashboard,
+    invoices: false,
+    children: [],
+  },
+  {
+    prefix: 'delivery',
+    roles: ['DELIVERY'],
+    dashboard: DeliveryDashboard,
+    invoices: false,
+    children: [],
+  },
+  {
+    prefix: 'customer',
+    roles: ['CUSTOMER'],
+    dashboard: CustomerDashboard,
+    invoices: false,
+    children: [
+      { path: 'orders/new', element: <CreateOrder /> },
+      { path: 'orders/:id', element: <OrderDetails /> },
+    ],
+  },
 ];
 
 export default function App() {
@@ -37,13 +77,16 @@ export default function App() {
       <Route path="/unauthorized" element={<Unauthorized />} />
       <Route path="/" element={<HomeRedirect />} />
 
-      {SECTIONS.map(({ prefix, roles, dashboard: Dashboard, invoices }) => (
+      {SECTIONS.map(({ prefix, roles, dashboard: Dashboard, invoices, children }) => (
         <Route key={prefix} element={<ProtectedRoute allowedRoles={roles} />}>
           <Route path={`/${prefix}`} element={<AppLayout />}>
             <Route index element={<Navigate to="dashboard" replace />} />
             <Route path="dashboard" element={<Dashboard />} />
             <Route path="orders" element={<Orders />} />
             {invoices && <Route path="invoices" element={<Invoices />} />}
+            {children.map((child) => (
+              <Route key={child.path} path={child.path} element={child.element} />
+            ))}
           </Route>
         </Route>
       ))}

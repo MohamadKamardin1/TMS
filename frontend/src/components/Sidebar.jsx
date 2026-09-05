@@ -1,10 +1,12 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Package, Receipt } from 'lucide-react';
+import { LayoutDashboard, Package, PlusCircle, Receipt, ScrollText, Users } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 /**
  * Left navigation filtered by the current role. Every role gets a Dashboard
- * and Orders page; only ADMIN and CASHIER get the Invoices section.
+ * and Orders page; the cashier's billing hub lives on their Dashboard, so the
+ * separate Invoices, Users and Audit-log sections are ADMIN-only. Only
+ * CUSTOMER gets "New order".
  */
 export default function Sidebar({ open, onClose }) {
   const { role } = useAuth();
@@ -15,8 +17,14 @@ export default function Sidebar({ open, onClose }) {
     { to: `${prefix}/orders`, label: 'Orders', icon: Package },
   ];
 
-  if (role === 'ADMIN' || role === 'CASHIER') {
+  if (role === 'CUSTOMER') {
+    links.splice(1, 0, { to: `${prefix}/orders/new`, label: 'New order', icon: PlusCircle });
+  }
+
+  if (role === 'ADMIN') {
     links.push({ to: `${prefix}/invoices`, label: 'Invoices', icon: Receipt });
+    links.push({ to: `${prefix}/users`, label: 'Users', icon: Users });
+    links.push({ to: `${prefix}/audit-logs`, label: 'Audit logs', icon: ScrollText });
   }
 
   return (
@@ -30,7 +38,7 @@ export default function Sidebar({ open, onClose }) {
       )}
 
       <aside
-        className={`fixed z-40 flex h-full w-64 flex-col border-r border-slate-200 bg-white shadow-lg transition-transform duration-200 lg:static lg:translate-x-0 lg:shadow-none ${
+        className={`fixed z-40 flex h-full w-64 flex-col border-r border-gray-200 bg-white shadow-lg transition-transform duration-200 lg:static lg:translate-x-0 lg:shadow-none ${
           open ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
@@ -43,8 +51,8 @@ export default function Sidebar({ open, onClose }) {
               className={({ isActive }) =>
                 `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition ${
                   isActive
-                    ? 'bg-indigo-600 text-white shadow'
-                    : 'text-slate-600 hover:bg-slate-100'
+                    ? 'bg-gray-800 text-white shadow'
+                    : 'text-gray-600 hover:bg-gray-50'
                 }`
               }
             >
@@ -53,7 +61,7 @@ export default function Sidebar({ open, onClose }) {
             </NavLink>
           ))}
         </nav>
-        <div className="border-t border-slate-200 p-4 text-xs text-slate-400">
+        <div className="border-t border-gray-200 p-4 text-xs text-gray-400">
           Tailor Management System
         </div>
       </aside>

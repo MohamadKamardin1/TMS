@@ -1,9 +1,11 @@
 package com.amdevelopers.tms.invoices;
 
+import static org.hamcrest.Matchers.matchesPattern;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -23,9 +25,9 @@ import org.springframework.test.web.servlet.MvcResult;
 @ActiveProfiles("test")
 class InvoiceFlowTests {
 
-    private static final String TAILOR_PASSWORD = "tailor123";
-    private static final String CASHIER_PASSWORD = "cashier123";
-    private static final String ADMIN_PASSWORD = "admin123";
+    private static final String TAILOR_PASSWORD = "123456";
+    private static final String CASHIER_PASSWORD = "123456";
+    private static final String ADMIN_PASSWORD = "123456";
 
     @Autowired
     private MockMvc mockMvc;
@@ -34,136 +36,247 @@ class InvoiceFlowTests {
     private ObjectMapper objectMapper;
 
     @Test
-    void cashier_generates_invoice_and_marks_paid() throws Exception {
+    void cashier_drafts_edits_issues_and_records_payment() throws Exception {
         long orderId = toEstimated();
+        String cashierToken = login("cashier@gmail.com", CASHIER_PASSWORD);
 
-        String cashierToken = login("cashier1", CASHIER_PASSWORD);
-
-        MvcResult generated = mockMvc.perform(post("/api/invoices")
+        // 1. Draft is created from the tailor estimate; order becomes INVOICED.
+        long invoiceId = idFrom(mockMvc.perform(post("/api/invoices")
                         .param("orderId", String.valueOf(orderId))
                         .header("Authorization", bearer(cashierToken))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(generateBody()))
+                        .content("{}"))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.status").value("DRAFT"))
                 .andExpect(jsonPath("$.data.orderStatus").value("INVOICED"))
-                .andExpect(jsonPath("$.data.paymentStatus").value("PENDING"))
-                .andExpect(jsonPath("$.data.amount").value(5000.0))
-                .andExpect(jsonPath("$.data.referenceNumber").value("INV-001"))
-                .andExpect(jsonPath("$.data.issuedBy").value("Demo Cashier"))
-                .andReturn();
-        long invoiceId = idFrom(generated);
+                .andExpect(jsonPath("$.data.invoiceNumber", matchesPattern("INV-\\d{4}-\\d{4}")))
+                .andExpect(jsonPath("$.data.subtotal").value(2000.0))
+                .andExpect(jsonPath("$.data.taxAmount").value(0.0))
+                .andExpect(jsonPath("$.data.discountAmount").value(0.0))
+                .andExpect(jsonPath("$.data.totalAmount").value(2000.0))
+                .andReturn());
 
-        mockMvc.perform(get("/api/invoices/order/{orderId}", orderId)
-                        .header("Authorization", bearer(cashierToken)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.id").value(invoiceId));
+        // A second draft for the same order is rejected.
+        mockMvc.perform(post("/api/invoices")
+                        .param("orderId", String.valueOf(orderId))
+                        .header("Authorization", bearer(cashierToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isConflict());
 
-        mockMvc.perform(patch("/api/invoices/{id}/status", invoiceId)
+        // 2. Cashier adjusts tax/discount before finalising.
+        mockMvc.perform(put("/api/invoices/{id}", invoiceId)
                         .header("Authorization", bearer(cashierToken))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"paymentStatus":"PAID"}"""))
+                                {"subtotal":2000.0,"taxAmount":60.0,"discountAmount":100.0,
+                                 "paymentInstructions":"Bank transfer to ACC-9999",
+                                 "dueDate":"2026-10-10"}"""))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.paymentStatus").value("PAID"))
+                .andExpect(jsonPath("$.data.status").value("DRAFT"))
+                .andExpect(jsonPath("$.data.totalAmount").value(1960.0))
+                .andExpect(jsonPath("$.data.taxAmount").value(60.0))
+                .andExpect(jsonPath("$.data.discountAmount").value(100.0))
+                .andExpect(jsonPath("$.data.paymentInstructions").value("Bank transfer to ACC-9999"))
+                .andExpect(jsonPath("$.data.dueDate").value("2026-10-10"));
+
+        // 3. Issue finalises the document.
+        mockMvc.perform(post("/api/invoices/{id}/issue", invoiceId)
+                        .header("Authorization", bearer(cashierToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("ISSUED"))
+                .andExpect(jsonPath("$.data.issuedAt").exists())
+                .andExpect(jsonPath("$.data.issuedBy").value("Cashier Staff"));
+
+        // Issued documents are immutable.
+        mockMvc.perform(put("/api/invoices/{id}", invoiceId)
+                        .header("Authorization", bearer(cashierToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"subtotal":100.0}"""))
+                .andExpect(status().isConflict());
+        mockMvc.perform(post("/api/invoices/{id}/issue", invoiceId)
+                        .header("Authorization", bearer(cashierToken)))
+                .andExpect(status().isConflict());
+
+        // 4. Recording the payment marks the invoice PAID and the order PAID.
+        mockMvc.perform(post("/api/invoices/{id}/record-payment", invoiceId)
+                        .header("Authorization", bearer(cashierToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("PAID"))
                 .andExpect(jsonPath("$.data.paidAt").exists());
 
-        String adminToken = login("admin", ADMIN_PASSWORD);
+        mockMvc.perform(post("/api/invoices/{id}/record-payment", invoiceId)
+                        .header("Authorization", bearer(cashierToken)))
+                .andExpect(status().isConflict());
+
+        String adminToken = login("admin@gmail.com", ADMIN_PASSWORD);
         mockMvc.perform(get("/api/orders/{id}", orderId).header("Authorization", bearer(adminToken)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status").value("PAID"));
     }
 
     @Test
-    void state_machine_is_strictly_enforced() throws Exception {
+    void invoices_require_an_estimated_order_and_strict_roles() throws Exception {
         String customerToken = register(uniqueUsername());
         long orderId = idFrom(mockMvc.perform(multipart("/api/orders")
-                        .param("title", "Strict Transition Test")
+                        .param("title", "Role Gate Order")
                         .header("Authorization", bearer(customerToken)))
                 .andExpect(status().isCreated())
                 .andReturn());
-        String cashierToken = login("cashier1", CASHIER_PASSWORD);
+        String cashierToken = login("cashier@gmail.com", CASHIER_PASSWORD);
 
-        // Not yet ESTIMATED -> invoice generation rejected
+        // Not yet ESTIMATED -> invoice generation rejected.
         mockMvc.perform(post("/api/invoices")
                         .param("orderId", String.valueOf(orderId))
                         .header("Authorization", bearer(cashierToken))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(generateBody()))
+                        .content("{}"))
                 .andExpect(status().isConflict());
 
         submitEstimation(orderId);
-        MvcResult generated = mockMvc.perform(post("/api/invoices")
-                        .param("orderId", String.valueOf(orderId))
-                        .header("Authorization", bearer(cashierToken))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(generateBody()))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.data.orderStatus").value("INVOICED"))
-                .andReturn();
-        long invoiceId = idFrom(generated);
 
-        // Duplicate invoice rejected
-        mockMvc.perform(post("/api/invoices")
-                        .param("orderId", String.valueOf(orderId))
-                        .header("Authorization", bearer(cashierToken))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(generateBody()))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.message").value("Order " + orderId + " already has an invoice"));
-
-        // Failed payment keeps the order in INVOICED so it can be retried
-        mockMvc.perform(patch("/api/invoices/{id}/status", invoiceId)
-                        .header("Authorization", bearer(cashierToken))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"paymentStatus":"FAILED"}"""))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.paymentStatus").value("FAILED"));
-
-        mockMvc.perform(patch("/api/invoices/{id}/status", invoiceId)
-                        .header("Authorization", bearer(cashierToken))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"paymentStatus":"PAID"}"""))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.paymentStatus").value("PAID"));
-
-        // Already PAID -> further transitions rejected
-        mockMvc.perform(patch("/api/invoices/{id}/status", invoiceId)
-                        .header("Authorization", bearer(cashierToken))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"paymentStatus":"FAILED"}"""))
-                .andExpect(status().isConflict());
-    }
-
-    @Test
-    void invoice_endpoints_are_cashier_or_admin_only() throws Exception {
-        String customerToken = register(uniqueUsername());
-        long orderId = toEstimated();
-
-        String tailorToken = login("tailor1", TAILOR_PASSWORD);
+        // A tailor cannot generate invoices.
+        String tailorToken = login("tailor@gmail.com", TAILOR_PASSWORD);
         mockMvc.perform(post("/api/invoices")
                         .param("orderId", String.valueOf(orderId))
                         .header("Authorization", bearer(tailorToken))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(generateBody()))
+                        .content("{}"))
                 .andExpect(status().isForbidden());
 
-        mockMvc.perform(get("/api/invoices/order/{orderId}", orderId)
+        long invoiceId = idFrom(mockMvc.perform(post("/api/invoices")
+                        .param("orderId", String.valueOf(orderId))
+                        .header("Authorization", bearer(cashierToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isCreated())
+                .andReturn());
+        mockMvc.perform(post("/api/invoices/{id}/issue", invoiceId)
+                        .header("Authorization", bearer(cashierToken)))
+                .andExpect(status().isOk());
+
+        // The owning customer may read their invoice...
+        mockMvc.perform(get("/api/invoices/my-order/{orderId}", orderId)
+                        .header("Authorization", bearer(customerToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.orderId").value(orderId));
+
+        // ...but a different customer may not.
+        String otherCustomerToken = register(uniqueUsername());
+        mockMvc.perform(get("/api/invoices/my-order/{orderId}", orderId)
+                        .header("Authorization", bearer(otherCustomerToken)))
+                .andExpect(status().isForbidden());
+
+        // Customers cannot list invoices.
+        mockMvc.perform(get("/api/invoices")
                         .header("Authorization", bearer(customerToken)))
                 .andExpect(status().isForbidden());
     }
 
+    @Test
+    void issued_invoices_become_overdue_and_can_still_be_paid() throws Exception {
+        long orderId = toEstimated();
+        String cashierToken = login("cashier@gmail.com", CASHIER_PASSWORD);
+
+        long invoiceId = idFrom(mockMvc.perform(post("/api/invoices")
+                        .param("orderId", String.valueOf(orderId))
+                        .header("Authorization", bearer(cashierToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isCreated())
+                .andReturn());
+
+        // Backdate the due date so the lazy sweep promotes the invoice.
+        mockMvc.perform(put("/api/invoices/{id}", invoiceId)
+                        .header("Authorization", bearer(cashierToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"dueDate":"2020-01-01"}"""))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/api/invoices/{id}/issue", invoiceId)
+                        .header("Authorization", bearer(cashierToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("ISSUED"));
+
+        // Reading sweeps the overdue invoice.
+        mockMvc.perform(get("/api/invoices/{id}", invoiceId)
+                        .header("Authorization", bearer(cashierToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("OVERDUE"));
+
+        // Filtering by OVERDUE returns it.
+        mockMvc.perform(get("/api/invoices")
+                        .param("status", "OVERDUE")
+                        .header("Authorization", bearer(cashierToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[?(@.id == %d)]", invoiceId).exists());
+
+        // An overdue invoice can still be settled.
+        mockMvc.perform(post("/api/invoices/{id}/record-payment", invoiceId)
+                        .header("Authorization", bearer(cashierToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("PAID"));
+    }
+
+    @Test
+    void discarding_a_draft_returns_the_order_to_estimated() throws Exception {
+        long orderId = toEstimated();
+        String cashierToken = login("cashier@gmail.com", CASHIER_PASSWORD);
+        String adminToken = login("admin@gmail.com", ADMIN_PASSWORD);
+
+        long invoiceId = idFrom(mockMvc.perform(post("/api/invoices")
+                        .param("orderId", String.valueOf(orderId))
+                        .header("Authorization", bearer(cashierToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.orderStatus").value("INVOICED"))
+                .andReturn());
+
+        mockMvc.perform(delete("/api/invoices/{id}", invoiceId)
+                        .header("Authorization", bearer(cashierToken)))
+                .andExpect(status().isOk());
+
+        // The order is billable again.
+        mockMvc.perform(get("/api/orders/{id}", orderId).header("Authorization", bearer(adminToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("ESTIMATED"));
+
+        // A fresh draft can now be generated.
+        mockMvc.perform(post("/api/invoices")
+                        .param("orderId", String.valueOf(orderId))
+                        .header("Authorization", bearer(cashierToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isCreated());
+
+        // Issued/paid documents cannot be discarded.
+        long secondOrder = toEstimated();
+        long secondInvoice = idFrom(mockMvc.perform(post("/api/invoices")
+                        .param("orderId", String.valueOf(secondOrder))
+                        .header("Authorization", bearer(cashierToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isCreated())
+                .andReturn());
+        mockMvc.perform(post("/api/invoices/{id}/issue", secondInvoice)
+                        .header("Authorization", bearer(cashierToken)))
+                .andExpect(status().isOk());
+        mockMvc.perform(delete("/api/invoices/{id}", secondInvoice)
+                        .header("Authorization", bearer(cashierToken)))
+                .andExpect(status().isConflict());
+    }
+
     /**
-     * Registers a fresh customer, creates an order, assigns the demo tailor
-     * and submits an estimation so the order reaches ESTIMATED. Returns order id.
+     * Registers a fresh customer, creates an order, assigns the demo tailor and
+     * submits an estimation so the order reaches ESTIMATED (price 2000.0).
      */
     private long toEstimated() throws Exception {
         String customerToken = register(uniqueUsername());
         long orderId = idFrom(mockMvc.perform(multipart("/api/orders")
-                        .param("title", "Cashier Workflow Order")
+                        .param("title", "Invoice Workflow Order")
                         .header("Authorization", bearer(customerToken)))
                 .andExpect(status().isCreated())
                 .andReturn());
@@ -172,8 +285,8 @@ class InvoiceFlowTests {
     }
 
     private void submitEstimation(long orderId) throws Exception {
-        String adminToken = login("admin", ADMIN_PASSWORD);
-        String tailorToken = login("tailor1", TAILOR_PASSWORD);
+        String adminToken = login("admin@gmail.com", ADMIN_PASSWORD);
+        String tailorToken = login("tailor@gmail.com", TAILOR_PASSWORD);
         long tailorId = userIdOf(tailorToken);
 
         mockMvc.perform(post("/api/orders/{id}/assign-tailor", orderId)
@@ -189,11 +302,6 @@ class InvoiceFlowTests {
                         .content("""
                                 {"estimatedPrice":2000.0,"estimatedCompletionDate":"2026-12-10"}"""))
                 .andExpect(status().isOk());
-    }
-
-    private static String generateBody() {
-        return """
-                {"amount":5000.0,"accountNumber":"ACC-001","referenceNumber":"INV-001"}""";
     }
 
     private String uniqueUsername() {

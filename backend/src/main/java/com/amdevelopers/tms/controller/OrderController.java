@@ -78,10 +78,17 @@ public class OrderController {
 
     @PostMapping("/{id}/assign-delivery")
     @PreAuthorize("hasRole('ADMIN') or hasRole('CASHIER')")
-    public ResponseEntity<ApiResponse<OrderDTO>> assignDelivery(
+    public ResponseEntity<ApiResponse<OrderDTO>> assignDeliveryAgent(
             @PathVariable Long id, @Valid @RequestBody AssignDeliveryRequest request) {
         return ResponseEntity.ok(ApiResponse.success("Delivery agent assigned",
-                orderService.assignDelivery(id, request)));
+                orderService.assignDeliveryAgent(id, request)));
+    }
+
+    @PostMapping("/{id}/out-for-delivery")
+    @PreAuthorize("hasRole('DELIVERY')")
+    public ResponseEntity<ApiResponse<OrderDTO>> markOutForDelivery(@PathVariable Long id) {
+        return ResponseEntity.ok(ApiResponse.success("Order is out for delivery",
+                orderService.markOutForDelivery(id)));
     }
 
     @PostMapping("/{id}/confirm-delivery")

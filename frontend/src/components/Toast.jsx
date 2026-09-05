@@ -64,8 +64,10 @@ export function ToastProvider({ children }) {
     [push],
   );
 
+  const contextValue = useMemo(() => ({ toast }), [toast]);
+
   return (
-    <ToastContext.Provider value={toast}>
+    <ToastContext.Provider value={contextValue}>
       {children}
       <div className="fixed bottom-4 right-4 z-50 flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2">
         {toasts.map((t) => (

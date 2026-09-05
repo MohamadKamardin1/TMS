@@ -48,18 +48,18 @@ export default function Register() {
   };
 
   const inputClass =
-    'w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200';
+    'w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm text-gray-800 outline-none transition focus:border-gray-500 focus:ring-2 focus:ring-gray-200';
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-indigo-600 via-indigo-500 to-slate-900 p-4">
-      <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl sm:p-8">
+    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-gray-800 via-gray-700 to-gray-900 p-4">
+      <div className="w-full max-w-md rounded-2xl border border-gray-200 bg-white p-6 shadow-2xl sm:p-8">
         <div className="mb-6 flex items-center gap-2">
-          <div className="rounded-xl bg-indigo-600 p-2 text-white">
+          <div className="rounded-xl bg-gray-800 p-2 text-white">
             <Scissors className="h-5 w-5" />
           </div>
           <div>
-            <h1 className="text-lg font-bold text-slate-800">Create your account</h1>
-            <p className="text-xs text-slate-500">
+            <h1 className="text-lg font-bold text-gray-800">Create your account</h1>
+            <p className="text-xs text-gray-500">
               Register to place tailoring orders online.
             </p>
           </div>
@@ -73,7 +73,7 @@ export default function Register() {
           )}
 
           <div>
-            <label htmlFor="fullName" className="mb-1 block text-sm font-medium text-slate-700">
+            <label htmlFor="fullName" className="mb-1 block text-sm font-medium text-gray-700">
               Full name
             </label>
             <input id="fullName" type="text" required value={form.fullName} onChange={update('fullName')}
@@ -81,7 +81,7 @@ export default function Register() {
           </div>
 
           <div>
-            <label htmlFor="username" className="mb-1 block text-sm font-medium text-slate-700">
+            <label htmlFor="username" className="mb-1 block text-sm font-medium text-gray-700">
               Username
             </label>
             <input id="username" type="text" required value={form.username} onChange={update('username')}
@@ -89,7 +89,7 @@ export default function Register() {
           </div>
 
           <div>
-            <label htmlFor="email" className="mb-1 block text-sm font-medium text-slate-700">
+            <label htmlFor="email" className="mb-1 block text-sm font-medium text-gray-700">
               Email
             </label>
             <input id="email" type="email" required value={form.email} onChange={update('email')}
@@ -97,7 +97,7 @@ export default function Register() {
           </div>
 
           <div>
-            <label htmlFor="password" className="mb-1 block text-sm font-medium text-slate-700">
+            <label htmlFor="password" className="mb-1 block text-sm font-medium text-gray-700">
               Password
             </label>
             <div className="relative">
@@ -114,7 +114,7 @@ export default function Register() {
               <button
                 type="button"
                 onClick={() => setShowPassword((v) => !v)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 transition hover:text-slate-600"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 transition hover:text-gray-600"
                 aria-label={showPassword ? 'Hide password' : 'Show password'}
               >
                 {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -123,7 +123,7 @@ export default function Register() {
           </div>
 
           <div>
-            <label htmlFor="confirmPassword" className="mb-1 block text-sm font-medium text-slate-700">
+            <label htmlFor="confirmPassword" className="mb-1 block text-sm font-medium text-gray-700">
               Confirm password
             </label>
             <input
@@ -140,16 +140,16 @@ export default function Register() {
           <button
             type="submit"
             disabled={loading}
-            className="flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-600 py-2.5 text-sm font-semibold text-white shadow transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+            className="flex w-full items-center justify-center gap-2 rounded-lg bg-gray-800 py-2.5 text-sm font-semibold text-white shadow transition hover:bg-gray-900 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />}
             {loading ? 'Creating account...' : 'Create account'}
           </button>
         </form>
 
-        <p className="mt-4 text-center text-sm text-slate-500">
+        <p className="mt-4 text-center text-sm text-gray-500">
           Already have an account?{' '}
-          <Link to="/login" className="font-medium text-indigo-600 hover:underline">
+          <Link to="/login" className="font-medium text-gray-700 hover:underline">
             Sign in
           </Link>
         </p>

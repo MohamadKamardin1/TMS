@@ -1,15 +1,21 @@
 import { useCallback, useEffect, useState } from 'react';
-import { PackageOpen, RefreshCw } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { ChevronRight, PackageOpen, RefreshCw } from 'lucide-react';
 import api from '../services/api';
+import { useAuth } from '../context/AuthContext';
 import { useToast } from '../components/Toast';
 import StatusBadge from '../components/StatusBadge';
+import { BTN_SECONDARY, DataTable, PAGE_HEADER } from '../components/ui';
 import { formatDate, formatMoney } from '../utils/format';
 
 /**
- * Role-filtered order list (service returns only the orders the current user
- * may see). Reloads on mount; refresh button re-queries the backend.
+ * Role-filtered order list (the service returns only the orders the current
+ * user may see). Customers get a "Details" action into their order page; other
+ * roles read the same shared table. Loads on mount with a skeleton, refresh
+ * button, empty state and built-in pagination.
  */
 export default function Orders() {
+  const { role } = useAuth();
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();
@@ -30,65 +36,76 @@ export default function Orders() {
     load();
   }, [load]);
 
+  const showDetails = role === 'CUSTOMER';
+
+  const columns = [
+    { label: '#' },
+    { label: 'Title' },
+    { label: 'Status' },
+    { label: 'Est. price' },
+    { label: 'Customer' },
+    { label: 'Preferred delivery' },
+    { label: 'Created' },
+    ...(showDetails ? [{ label: '', className: 'text-right' }] : []),
+  ];
+
+  const renderRow = (order) => (
+    <tr key={order.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
+      <td className="px-4 py-3 font-medium text-gray-700">#{order.id}</td>
+      <td className="max-w-64 px-4 py-3">
+        <p className="truncate font-medium text-gray-800">
+          {order.title || order.garmentType || 'Tailoring request'}
+        </p>
+        {order.garmentType && <p className="text-xs text-gray-400">{order.garmentType}</p>}
+      </td>
+      <td className="px-4 py-3"><StatusBadge status={order.status} /></td>
+      <td className="whitespace-nowrap px-4 py-3 text-gray-600">{formatMoney(order.estimatedPrice)}</td>
+      <td className="px-4 py-3 text-gray-600">{order.customerName || '—'}</td>
+      <td className="whitespace-nowrap px-4 py-3 text-gray-600">{formatDate(order.preferredDeliveryDate)}</td>
+      <td className="whitespace-nowrap px-4 py-3 text-gray-600">{formatDate(order.createdAt)}</td>
+      {showDetails && (
+        <td className="px-4 py-3 text-right">
+          <Link
+            to={`/customer/orders/${order.id}`}
+            className="inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-semibold text-gray-600 transition hover:border-gray-300 hover:bg-gray-50"
+          >
+            Details
+            <ChevronRight className="h-3.5 w-3.5" />
+          </Link>
+        </td>
+      )}
+    </tr>
+  );
+
   return (
     <div>
-      <div className="mb-6 flex items-center justify-between">
+      <div className={PAGE_HEADER}>
         <div>
-          <h1 className="text-2xl font-bold text-slate-800">Orders</h1>
-          <p className="mt-1 text-sm text-slate-500">
+          <h1 className="text-2xl font-bold text-gray-800">Orders</h1>
+          <p className="mt-1 text-sm text-gray-500">
             All orders in your workspace ({orders.length}).
           </p>
         </div>
-        <button
-          type="button"
-          onClick={load}
-          className="flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
-        >
+        <button type="button" onClick={load} className={BTN_SECONDARY}>
           <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
           Refresh
         </button>
       </div>
 
-      {loading ? (
-        <div className="flex items-center justify-center rounded-2xl bg-white py-20 text-sm text-slate-400 shadow-sm">
-          Loading orders...
-        </div>
-      ) : orders.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-2xl bg-white py-20 text-center shadow-sm">
-          <PackageOpen className="mb-3 h-10 w-10 text-slate-300" />
-          <p className="text-sm font-medium text-slate-600">No orders yet</p>
-          <p className="mt-1 text-xs text-slate-400">Orders created for your account will appear here.</p>
-        </div>
-      ) : (
-        <div className="overflow-x-auto rounded-2xl bg-white shadow-sm">
-          <table className="w-full text-left text-sm">
-            <thead>
-              <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-400">
-                <th className="px-4 py-3 font-medium">#</th>
-                <th className="px-4 py-3 font-medium">Title</th>
-                <th className="px-4 py-3 font-medium">Status</th>
-                <th className="px-4 py-3 font-medium">Est. price</th>
-                <th className="px-4 py-3 font-medium">Customer</th>
-                <th className="px-4 py-3 font-medium">Required by</th>
-                <th className="px-4 py-3 font-medium">Created</th>
-              </tr>
-            </thead>
-            <tbody>
-              {orders.map((order) => (
-                <tr key={order.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
-                  <td className="px-4 py-3 font-medium text-slate-700">#{order.id}</td>
-                  <td className="px-4 py-3 text-slate-700">{order.title}</td>
-                  <td className="px-4 py-3"><StatusBadge status={order.status} /></td>
-                  <td className="px-4 py-3 text-slate-600">{formatMoney(order.estimatedPrice)}</td>
-                  <td className="px-4 py-3 text-slate-600">{order.customerName || '—'}</td>
-                  <td className="px-4 py-3 text-slate-600">{formatDate(order.requiredCompletionDate)}</td>
-                  <td className="px-4 py-3 text-slate-600">{formatDate(order.createdAt)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <DataTable
+        columns={columns}
+        rows={orders}
+        loading={loading}
+        renderRow={renderRow}
+        empty={{
+          icon: PackageOpen,
+          title: 'No orders yet',
+          hint:
+            role === 'CUSTOMER'
+              ? 'Create your first tailoring order and it will show up here.'
+              : 'Orders will appear here once they enter your workspace.',
+        }}
+      />
     </div>
   );
 }

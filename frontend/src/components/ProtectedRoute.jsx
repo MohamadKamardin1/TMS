@@ -1,10 +1,11 @@
-import { Navigate, useLocation } from 'react-router-dom';
+import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 /**
  * Guards a route. Redirects unauthenticated users to /login and authenticated
- * users whose role is not in `allowedRoles` to /unauthorized. Wraps either a
- * single element or an entire <Outlet/> layout, so use as:
+ * users whose role is not in `allowedRoles` to /unauthorized. When used as a
+ * layout route (element form) it renders the nested <Outlet/>; when given
+ * `children` directly it renders those instead.
  *
  *   <Route element={<ProtectedRoute allowedRoles={['ADMIN']} />}>
  *     <Route path="/admin" element={<AppLayout />}>...
@@ -21,5 +22,5 @@ export default function ProtectedRoute({ allowedRoles, children }) {
     return <Navigate to="/unauthorized" replace />;
   }
 
-  return children;
+  return children ?? <Outlet />;
 }
